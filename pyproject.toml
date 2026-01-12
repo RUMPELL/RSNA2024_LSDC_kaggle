@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rsna-lumbar-degenerative"
+version = "0.1.0"
+description = "Two-stage pipeline (YOLOv8 -> EfficientNet 2.5D) for RSNA 2024 Lumbar Spine Degenerative Classification."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "Your Name"}]
+dependencies = [
+  "numpy",
+  "pandas",
+  "tqdm",
+  "pyyaml",
+  "opencv-python",
+  "pydicom",
+  "torch",
+  "torchvision",
+  "timm",
+  "albumentations",
+  "scikit-learn",
+  "matplotlib",
+  "ultralytics",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

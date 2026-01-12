@@ -1,0 +1,5 @@
+# configs/paths.example.yaml
+# Copy this file to configs/paths.yaml and edit paths for your environment.
+
+train_images_dir: ./train_images
+png_out_dir: ./data/png_dataset

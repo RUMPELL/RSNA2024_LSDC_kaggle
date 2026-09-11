@@ -9,7 +9,7 @@ description = "Two-stage pipeline (YOLOv8 -> EfficientNet 2.5D) for RSNA 2024 Lu
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-authors = [{name = "Your Name"}]
+authors = [{name = "RUMPELL"}]
 dependencies = [
   "numpy",
   "pandas",

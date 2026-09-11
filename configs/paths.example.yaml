@@ -1,5 +1,14 @@
 # configs/paths.example.yaml
-# Copy this file to configs/paths.yaml and edit paths for your environment.
+# Copy this file to configs/paths.yaml and edit every path for your environment.
+# configs/paths.yaml is git-ignored.
 
-train_images_dir: ./train_images
-png_out_dir: ./data/png_dataset
+# Kaggle competition files
+train_csv: ./data/train.csv
+train_label_coordinates_csv: ./data/train_label_coordinates.csv
+test_series_descriptions_csv: ./data/test_series_descriptions.csv
+train_images_dir: ./data/train_images          # {study_id}/{series_id}/{instance_number}.dcm
+
+# Outputs
+png_out_dir: ./data/png_dataset                 # written by scripts/prepare_png_dataset.py
+png_root: ./data/png_dataset                    # read by scripts/train_classifier.py
+models_root: ./models                           # checkpoints written per condition/fold

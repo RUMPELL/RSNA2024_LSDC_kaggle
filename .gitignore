@@ -1,0 +1,32 @@
+# competition data, images, and outputs — never commit
+data/
+train_images/
+*.dcm
+*.png
+*.csv
+outputs/
+models/
+runs/
+submission*.csv
+configs/paths.yaml
+
+# weights
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# python / venv / build
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.ipynb_checkpoints/
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store

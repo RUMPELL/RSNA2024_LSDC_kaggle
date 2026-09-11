@@ -1,158 +1,153 @@
-# RSNA 2024 Lumbar Spine Degenerative Classification (Two-Stage: YOLOv8 → EfficientNet)
+# RSNA 2024 Lumbar Spine Degenerative Classification — two-stage MRI pipeline
 
-This repository packages a **reproducible**, **GitHub-public-ready** pipeline for the Kaggle competition
-**RSNA 2024 Lumbar Spine Degenerative Classification**, based on a two-stage approach:
+A two-stage pipeline for the Kaggle competition *RSNA 2024 Lumbar Spine Degenerative
+Classification*: **YOLOv8 disc localisation** on each MRI sequence, followed by
+**EfficientNet severity classification** on 2.5D (three-slice) crops. The repository is the
+competition notebooks refactored into an installable package with YAML-configured scripts.
 
-1. **Localization (Stage 1):** YOLOv8 detects disc/lesion-level regions per MRI sequence.
-2. **Severity classification (Stage 2):** EfficientNet consumes **2.5D (3-slice) PNG patches** and predicts severity.
-
-> Note: This repo **does not** redistribute the RSNA dataset. You must download data via Kaggle and configure paths.
-
----
-
-## Method Overview
-
-### Stage 1 — YOLOv8 detection (per sequence)
-- **Sagittal T2/STIR** → Spinal Canal Stenosis (SCS)
-- **Sagittal T1** → Neural Foraminal Narrowing (NFS)
-- **Axial T2** → Subarticular Stenosis (SC)
-
-### Stage 2 — EfficientNet severity classification (2.5D)
-- Each detected disc region is converted to a **3-channel PNG** by stacking adjacent slices: *(t−1, t, t+1)*.
-- Classifier is trained per condition and can be ensembled across folds.
-
-**Slice ordering:** when exporting 2.5D patches, DICOM slices are ordered by `InstanceNumber` (with filename as a stable tie-breaker) to match the original competition notebook behavior.
+> The RSNA dataset is not redistributed. Download it from Kaggle and point
+> `configs/paths.yaml` at it. No trained weights or competition scores are included.
 
 ---
 
-## Repository Structure
+## Problem
 
-- `src/rsna_lumbar/`
-  - `dicom/` : DICOM reading and normalization
-  - `detection/` : YOLO inference utilities
-  - `preprocess/` : DICOM → 3-channel PNG patch export
-  - `classification/` : EfficientNet dataset/model/train/infer
-  - `pipeline/` : end-to-end orchestration and submission creation
-- `scripts/` : runnable entrypoints
-- `configs/` : YAML configs (paths, hyperparameters)
+For each study, the task is to grade five disc levels (L1/L2 … L5/S1) for three conditions —
+spinal canal stenosis, neural foraminal narrowing (left/right), and subarticular stenosis
+(left/right) — into *normal/mild*, *moderate*, or *severe*, from three MRI sequences:
 
----
+| Sequence | Condition it is used for |
+|---|---|
+| Sagittal T2/STIR | spinal canal stenosis |
+| Sagittal T1 | neural foraminal narrowing |
+| Axial T2 | subarticular stenosis |
 
-## Setup
+## Pipeline
 
-```bash
-# recommended
-python -m venv .venv
-source .venv/bin/activate
-
-pip install -e .
+```
+DICOM series ──▶ dicom/io + preprocess ──▶ YOLOv8 (per sequence) ──▶ disc-level boxes
+                 VOI/modality LUT,           detection/yolo_infer      + L/R side from
+                 MONOCHROME1 fix,                                       ImagePositionPatient
+                 1–99 % clip, resize+pad                                (postprocess/)
+                                                                              │
+                                                                              ▼
+                                         preprocess/png_export: crop [t−1, t, t+1] ──▶ 3-channel PNG
+                                                                              │
+                                                                              ▼
+                              classification/: EfficientNet-B4 (timm) per condition, GroupKFold by study
+                                                                              │
+                                                                              ▼
+                                                  pipeline/submit: row_id template + fallback probabilities
 ```
 
----
+## What is implemented
 
-## Configure Paths
+| Stage | Module | Status |
+|---|---|---|
+| DICOM → uint8 image (modality/VOI LUT, MONOCHROME1 inversion, percentile clipping) | `dicom/io.py`, `preprocess/png_export.py` | implemented |
+| Resize-and-pad with scale/offset bookkeeping for box back-projection | `dicom/preprocess.py` | implemented |
+| YOLOv8 inference over a DICOM series → detections in original pixel coordinates | `detection/yolo_infer.py` | implemented |
+| Top-confidence-per-class filtering, missing-class fill, left/right side inference | `postprocess/` | implemented |
+| 2.5D three-slice crop export with per-sequence crop-size rules (`configs/png_export.yaml`) | `preprocess/png_export.py`, `scripts/prepare_png_dataset.py` | implemented |
+| Study-level `GroupKFold` split | `data/make_splits.py` | implemented |
+| EfficientNet classifier, class-weighted cross-entropy, AdamW + cosine schedule, AMP, early stopping, best-checkpoint saving | `classification/` , `scripts/train_classifier.py` | implemented |
+| Fold-ensemble logit averaging → softmax, and the `submission.csv` row template | `pipeline/submit.py` | implemented |
+| YOLO **training-set** export from coordinate CSVs | `data/yolo_export.py`, `scripts/prepare_yolo_dataset.py` | **not implemented** (stub) |
+| End-to-end test-time orchestration (series selection → YOLO → crop → classifier per study) | `pipeline/submit.py` | **not implemented** — writes fallback probabilities for every row |
 
-Copy and edit:
+## Data preprocessing
 
-```bash
-cp configs/paths.example.yaml configs/paths.yaml
-```
-
----
-
-## Expected PNG Layout (Stage-2 input)
-
-`prepare_png_dataset.py` will create (or expects) a layout like:
+`scripts/prepare_png_dataset.py` reads one crop instruction per row from a CSV with columns
+`study_id, series_id, instance_number, level, series_description, condition, x, y`, and writes:
 
 ```
 png_root/
-├─ spinal_canal_stenosis/
-│  ├─ {study_id}_disc{level}.png
+├─ spinal_canal_stenosis/{study_id}_disc{level}.png
 ├─ left_neural_foraminal_narrowing/
 ├─ right_neural_foraminal_narrowing/
 ├─ left_subarticular_stenosis/
 └─ right_subarticular_stenosis/
 ```
 
-This matches the dataset routing in `src/rsna_lumbar/classification/dataset.py`.
+Each PNG stacks the previous, centre, and next slice as channels. Slices are ordered by
+`InstanceNumber` with filename as a stable tie-breaker. Crop size and offset rules for
+sagittal vs. axial sequences are in `configs/png_export.yaml` and mirror the original
+notebook so exported inputs match what the models were trained on.
 
----
+## Training and inference
 
-## Quickstart
+- **Training** (`scripts/train_classifier.py`): one condition at a time; expects a prepared
+  dataframe (`study_id, level, severity, [side], [fold]`) and adds a study-level
+  `GroupKFold` column if absent. Hyper-parameters — `tf_efficientnet_b4`, 380 px, class
+  weights `[1, 2, 4]`, AdamW 3e-4, cosine schedule, AMP, patience 5 — are in
+  `configs/cls_effnet.yaml`.
+- **Inference** (`scripts/infer_submit.py`): loads fold ensembles and writes a
+  `submission.csv`. Because per-study orchestration is not implemented, the current script
+  fills every row with the configured fallback probabilities (see *Limitations*).
 
-### 1) Export YOLO training dataset (optional, if training YOLO)
-```bash
-python scripts/prepare_yolo_dataset.py --config configs/paths.yaml --out outputs/yolo_dataset
+## Repository structure
+
+```
+src/rsna_lumbar/
+  dicom/            DICOM reading, LUT/monochrome handling, resize+pad
+  detection/        YOLOv8 series inference
+  postprocess/      confidence filtering, missing-class fill, L/R side inference
+  preprocess/       2.5D crop export
+  data/             GroupKFold splits; YOLO dataset export (stub)
+  classification/   dataset, EfficientNet model, transforms, train loop, fold runner, metrics
+  pipeline/         submission assembly
+  utils/            YAML loader, seeding
+scripts/            prepare_png_dataset, prepare_yolo_dataset (stub), train_classifier, infer_submit
+configs/            paths.example.yaml, png_export.yaml, cls_effnet.yaml
+docs/               method_overview.md
 ```
 
-### 2) Export 3-channel PNG patches for EfficientNet (recommended)
+## Quick start
+
 ```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+cp configs/paths.example.yaml configs/paths.yaml   # then edit every path
+
+# 1) export 2.5D PNG crops
 python scripts/prepare_png_dataset.py \
-  --config configs/png_export.yaml \
-  --paths configs/paths.yaml \
-  --csv ./data/crop_instructions.csv
-```
+  --config configs/png_export.yaml --paths configs/paths.yaml \
+  --csv /path/to/crop_instructions.csv
 
-### 3) Train classifier (per condition)
-```bash
-python scripts/train_classifier.py --config configs/cls_effnet.yaml --paths configs/paths.yaml --condition spinal_canal_stenosis
-```
+# 2) train one condition (all folds)
+python scripts/train_classifier.py \
+  --config configs/cls_effnet.yaml --paths configs/paths.yaml \
+  --condition spinal_canal_stenosis --train-df /path/to/train_df.csv
 
-### 4) Create submission (requires trained weights and YOLO models)
-```bash
+# 3) write a submission template (fallback probabilities only — see Limitations)
 python scripts/infer_submit.py --paths configs/paths.yaml --cls configs/cls_effnet.yaml
 ```
 
----
+`pip install -e .` pulls in torch, timm, ultralytics, pydicom, and OpenCV; a CUDA GPU is
+assumed for training.
 
-## Reproducibility Notes
+## Reproducibility
 
-- All randomness is controlled via `rsna_lumbar/utils/seed.py`.
-- Splits should be **study-level** to avoid leakage (see `rsna_lumbar/data/make_splits.py`).
+- Seeds for Python, NumPy, and PyTorch are set in `utils/seed.py`.
+- Splits are study-level to avoid leakage between slices of the same patient.
+- Crop rules and DICOM conversion are configuration-driven and documented against the
+  original notebook (`docs/method_overview.md`).
+- Competition results are **not** recorded in this repository; nothing here should be read
+  as a leaderboard claim.
 
----
+## Limitations
 
-## Disclaimer
+- **YOLO training-set export is a stub.** `data/yolo_export.py` and
+  `scripts/prepare_yolo_dataset.py` print a TODO; YOLO models must be trained elsewhere.
+- **No end-to-end inference.** `pipeline/submit.py` builds the `row_id` template and loads
+  classifier ensembles, but the per-study loop that selects series, runs YOLO, crops, and
+  classifies is not written; every row receives the fallback `[0.4, 0.4, 0.2]`.
+- `scripts/infer_submit.py` has placeholder YOLO/classifier weight paths that must be edited.
+- There are no unit tests or CI in this repository.
+- The 2.5D crop rules were tuned on the competition data; generalisation across scanners,
+  protocols, and slice thicknesses is not evaluated.
 
-This is a research/competition codebase repackaged for clarity and reproducibility.
-Competition-specific heuristics (e.g., fallback probabilities) are configurable and logged.
+## License
 
-
-
-
-## Notebook parity (important)
-
-This repository was refactored from the original Kaggle notebooks. The PNG export pipeline is designed to match
-`save_crop-3ch.ipynb` as closely as possible:
-
-- DICOM -> uint8 conversion uses modality/VOI LUT (when available), MONOCHROME1 fix, and percentile clipping (1,99).
-- 3-channel crops are created by stacking **[prev, center, next]** slices.
-- Crop sizing/offset rules follow the notebook for `Sagittal T2/STIR` and `Axial T2`.
-
-If you want identical inputs to the notebook, make sure your crop-instruction CSV uses the same columns and semantics.
-
-## Prepare 3-channel PNG crops
-
-1) Copy configs:
-
-```bash
-cp configs/paths.example.yaml configs/paths.yaml
-```
-
-2) Edit `configs/paths.yaml` and set:
-- `train_images_dir`: path to Kaggle-style DICOM tree (`train_images/{study_id}/{series_id}/{instance_number}.dcm`)
-- `png_out_dir`: output folder
-
-3) Run exporter:
-
-```bash
-python scripts/prepare_png_dataset.py \
-  --config configs/png_export.yaml \
-  --paths configs/paths.yaml \
-  --csv /path/to/crop_instructions.csv
-```
-
-The exporter expects each row in `crop_instructions.csv` to describe one crop with:
-`study_id, series_id, instance_number, level, series_description, condition, x, y`.
-
-Outputs will be written under `png_out_dir` with the same folder layout used in the training notebook.
+[MIT](LICENSE)

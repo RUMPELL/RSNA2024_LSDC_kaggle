@@ -1,5 +1,7 @@
 # RSNA 2024 Lumbar Spine Degenerative Classification — two-stage MRI pipeline
 
+[![CI](https://github.com/RUMPELL/RSNA2024_LSDC_kaggle/actions/workflows/ci.yml/badge.svg)](https://github.com/RUMPELL/RSNA2024_LSDC_kaggle/actions/workflows/ci.yml)
+
 A two-stage pipeline for the Kaggle competition *RSNA 2024 Lumbar Spine Degenerative
 Classification*: **YOLOv8 disc localisation** on each MRI sequence, followed by
 **EfficientNet severity classification** on 2.5D (three-slice) crops. The repository is the
@@ -135,6 +137,12 @@ assumed for training.
   original notebook (`docs/method_overview.md`).
 - Competition results are **not** recorded in this repository; nothing here should be read
   as a leaderboard claim.
+- **Tests.** `python -m unittest discover -s tests -t .` runs 50 dependency-light checks on
+  synthetic inputs: DICOM → uint8 conversion (LUT pass-through, MONOCHROME1 inversion,
+  percentile clipping), crop clamping and crop-rule arithmetic, `[prev, center, next]` slice
+  selection at the first/interior/last instance, resize-and-pad back-projection, the
+  study-level `GroupKFold` leakage guard, detection post-processing, and config loading. CI
+  runs them on Python 3.10/3.11 without torch, weights, or data.
 
 ## Limitations
 
@@ -144,7 +152,8 @@ assumed for training.
   classifier ensembles, but the per-study loop that selects series, runs YOLO, crops, and
   classifies is not written; every row receives the fallback `[0.4, 0.4, 0.2]`.
 - `scripts/infer_submit.py` has placeholder YOLO/classifier weight paths that must be edited.
-- There are no unit tests or CI in this repository.
+- Tests cover only the utility layers above; the classifier, YOLO inference, and training
+  loop are not exercised in CI.
 - The 2.5D crop rules were tuned on the competition data; generalisation across scanners,
   protocols, and slice thicknesses is not evaluated.
 

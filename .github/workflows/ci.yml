@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Dependency-light checks on deterministic utility code. No dataset, no
+    # trained weights, no GPU, no torch/timm/ultralytics: those stages are
+    # not exercised here.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install utility dependencies only
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas pydicom scikit-learn pyyaml opencv-python-headless
+          python -m pip install --no-deps -e .
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q src scripts tests
+
+      - name: Import sanity check (dependency-light modules)
+        run: |
+          python -c "import rsna_lumbar, rsna_lumbar.dicom.io, rsna_lumbar.dicom.preprocess, \
+                            rsna_lumbar.preprocess.png_export, rsna_lumbar.data.make_splits, \
+                            rsna_lumbar.postprocess.filtering, rsna_lumbar.postprocess.lr_split, \
+                            rsna_lumbar.utils.config, rsna_lumbar.utils.seed; print('imports ok')"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -p "test_*.py" -t . -v
